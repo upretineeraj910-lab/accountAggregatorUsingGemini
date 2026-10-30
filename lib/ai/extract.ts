@@ -180,6 +180,20 @@ export function prepareChunks(lines: string[]): ChunkPlan[] {
   return chunks;
 }
 
+export function cleanJsonText(rawText: string): string {
+  let cleaned = rawText.trim();
+  // Strip markdown code fences if present
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
+}
+
 async function callGeminiRest(
   payload: {
     contents: { role: string; parts: { text: string }[] }[];
@@ -188,7 +202,7 @@ async function callGeminiRest(
   },
   model: string,
   apiKey: string
-): Promise<{ candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }> {
+): Promise<{ candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[] }> {
   const cleanKey = apiKey.trim().replace(/^["']|["']$/g, "");
   let activeModel = model.trim().replace(/^["']|["']$/g, "");
 
@@ -229,7 +243,14 @@ async function callGeminiRest(
     }
 
     if (!callRes.ok) {
-      throw new AiExtractError("CHUNK_FAILED", `Gemini API returned status ${callRes.status}`);
+      let errorDetail = "";
+      try {
+        const errJson = await callRes.res.json();
+        errorDetail = errJson?.error?.message ? `: ${errJson.error.message}` : "";
+      } catch {
+        // ignore
+      }
+      throw new AiExtractError("CHUNK_FAILED", `Gemini API returned status ${callRes.status}${errorDetail}`);
     }
 
     const data = await callRes.res.json();
@@ -237,7 +258,8 @@ async function callGeminiRest(
   } catch (err: unknown) {
     if (err instanceof AiExtractError) throw err;
     const errName = err instanceof Error ? err.name : "Error";
-    throw new AiExtractError("CHUNK_FAILED", `Gemini API request failed: ${errName}`);
+    const errMsg = err instanceof Error ? err.message : "";
+    throw new AiExtractError("CHUNK_FAILED", `Gemini API request failed: ${errName} ${errMsg}`.trim());
   }
 }
 
@@ -287,14 +309,28 @@ async function processChunkWithRetry(
         throw new AiExtractError("CHUNK_FAILED", "Response hit max tokens or empty candidate");
       }
 
-      const text = candidate.content?.parts?.[0]?.text;
+      // Find the non-thought text part
+      let text = "";
+      const parts = candidate.content?.parts || [];
+      for (const p of parts) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (p.text && !(p as any).thought) {
+          text = p.text;
+          break;
+        }
+      }
+      if (!text) {
+        text = parts.map((p) => p.text).filter(Boolean).join("") || "";
+      }
+
       if (!text) {
         throw new AiExtractError("CHUNK_FAILED", "Empty text part from model response");
       }
 
       let parsed: { transactions?: RawAiRow[] };
       try {
-        parsed = JSON.parse(text);
+        const cleanedJson = cleanJsonText(text);
+        parsed = JSON.parse(cleanedJson);
       } catch {
         throw new AiExtractError("CHUNK_FAILED", "Invalid JSON from model");
       }
@@ -312,10 +348,11 @@ async function processChunkWithRetry(
       hint = `Previous attempt returned ${rows.length} rows but text has about ${chunk.expectedAnchors} date-start lines. Return ALL rows.`;
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error("Unknown chunk failure");
+      console.error(`Chunk attempt ${attempt} error:`, lastError.message);
     }
   }
 
-  if (bestRows.length > 0) {
+  if (bestRows.length > 0 || (chunk.expectedAnchors <= 2 && !lastError)) {
     return bestRows;
   }
 

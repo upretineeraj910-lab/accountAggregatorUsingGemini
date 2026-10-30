@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(responseBody);
   } catch (err: unknown) {
     if (err instanceof AiExtractError) {
-      console.error("AiExtractError:", err.code);
+      console.error("AiExtractError:", err.code, "-", err.message);
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: 502 }
