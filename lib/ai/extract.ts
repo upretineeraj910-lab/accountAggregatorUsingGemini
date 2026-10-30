@@ -285,10 +285,21 @@ async function processChunkWithRetry(
   let lastError: Error | null = null;
   let hint = "";
 
-  for (let attempt = 0; attempt <= 2; attempt++) {
+  for (let attempt = 0; attempt <= 3; attempt++) {
     if (attempt > 0) {
-      // Exponential backoff
-      await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(2, attempt - 1)));
+      if (lastError && (lastError.message.includes("429") || lastError.message.includes("quota"))) {
+        const retryMatch = lastError.message.match(/retry in ([\d.]+)s/i);
+        const waitSec = retryMatch ? parseFloat(retryMatch[1]) : 12;
+        const sleepMs = Math.min(32000, Math.ceil(waitSec * 1000) + 1200);
+        console.log(`[Rate Limit 429] Waiting ${(sleepMs / 1000).toFixed(1)}s for quota window to reset...`);
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      } else if (lastError && lastError.message.includes("503")) {
+        console.log("[High Demand 503] Pausing 3s before retry...");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      } else {
+        // Exponential backoff
+        await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(2, attempt - 1)));
+      }
     }
 
     try {
@@ -371,6 +382,10 @@ async function runWithConcurrency<T, R>(
     while (nextIndex < items.length) {
       const currentIndex = nextIndex++;
       results[currentIndex] = await worker(items[currentIndex]);
+      // Small pause between sequential chunks to respect free-tier per-minute quotas
+      if (nextIndex < items.length) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
     }
   }
 
