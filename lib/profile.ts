@@ -1,7 +1,9 @@
 import { Profile } from "./types";
 
-const LABEL_STRIP_WORDS = /^(?:details|name|branch|customer|address|city|account|holder|sub|base|a\/c|no|code|is|for)[:\s\-]+/i;
-const TRAILING_LABEL_WORDS = /[\s:\-]+(?:details|name|branch|customer|address|city|account|holder|a\/c|no|code)$/i;
+const LABEL_STRIP_WORDS =
+  /^(?:mr|mrs|ms|shri|smt|dr|details|name|branch|customer|address|city|account|holder|sub|base|a\/c|no|code|is|for)[:\s\-.]+/i;
+const TRAILING_LABEL_WORDS =
+  /[\s:\-]+(?:details|name|branch|customer|address|city|account|holder|a\/c|no|code)$/i;
 
 function cleanString(val: string): string {
   let cleaned = val.replace(/\s+/g, " ").trim();
@@ -15,35 +17,51 @@ function cleanString(val: string): string {
 }
 
 function cleanName(raw: string): string | undefined {
-  let name = cleanString(raw);
-  // Specifically remove leftover words if present at start, e.g. "Details Name MATIA" -> "MATIA"
-  name = name.replace(/^(?:details\s+)?(?:name\s+)?/i, "").trim();
-  if (/^[A-Za-z\s.]{3,40}$/.test(name)) {
-    // Avoid bank generic headers like "Statement of Account", "Punjab National Bank"
-    const lower = name.toLowerCase();
+  if (!raw) return undefined;
+  // If line has multiple column fields, cut off at next field header
+  const cutMatch = raw.split(
+    /(?:\s+(?:Account|A\/c|Acc|Branch|IFSC|Nominee|Address|Date|Mobile|Phone|Email|Joint|PAN|CIF|Page|Cust\s+Id)\b)|[;:|]/i
+  );
+  let candidate = cutMatch[0].trim();
+
+  // Strip leading honorifics / labels
+  candidate = candidate.replace(/^(?:mr|mrs|ms|shri|smt|dr)\.?\s+/i, "");
+  candidate = candidate.replace(/^(?:details\s+)?(?:name\s+)?/i, "");
+  candidate = cleanString(candidate);
+
+  if (/^[A-Za-z\s.]{3,50}$/.test(candidate)) {
+    // Avoid bank generic headers like "Statement of Account", "Punjab National Bank", "Bank Limited"
+    const lower = candidate.toLowerCase();
     if (
       lower.includes("statement") ||
       lower.includes("bank") ||
       lower.includes("transaction") ||
-      lower.includes("account")
+      lower.includes("account") ||
+      lower.includes("limited")
     ) {
       return undefined;
     }
-    return name;
+    return candidate.toUpperCase();
   }
   return undefined;
 }
 
 function cleanBranch(raw: string): string | undefined {
+  if (!raw) return undefined;
+  // First clean leading noise
   let branch = cleanString(raw);
-  // Strip leftover label words like "Details Name", "Branch Name"
-  branch = branch.replace(/^(?:details\s+)?(?:name\s+)?(?:branch\s+)?/i, "").trim();
+  // If line has multiple column fields, cut off at next field header
+  const cutMatch = branch.split(
+    /(?:\s+(?:Account|A\/c|Acc|Customer(?:\s+Name)?|IFSC|Nominee|Address|Date|Mobile|Phone|Email|Joint|PAN|CIF|Page|Cust\s+Id)\b)|[;:|]/i
+  );
+  branch = cleanString(cutMatch[0]);
+
   if (/^[A-Za-z0-9\s.,\-\/]{2,40}$/.test(branch) && /[A-Za-z]/.test(branch)) {
     const lower = branch.toLowerCase();
     if (lower.includes("statement") || lower.includes("page")) {
       return undefined;
     }
-    return branch;
+    return branch.toUpperCase();
   }
   return undefined;
 }
@@ -59,7 +77,7 @@ function cleanIfsc(raw: string): string | undefined {
 }
 
 export function extractProfile(lines: string[]): Profile {
-  const headerLines = lines.slice(0, 40);
+  const headerLines = lines.slice(0, 50);
 
   let name: string | undefined;
   let branch: string | undefined;
@@ -119,10 +137,8 @@ export function extractProfile(lines: string[]): Profile {
         continue;
       }
 
-      // First ALL-CAPS name line after "Statement of Transactions"
       if (seenStatementOfTxn && !name) {
         const trimmed = line.trim();
-        // Check if all caps letters (at least 3 chars) and not a keyword
         if (/^[A-Z\s.]{3,40}$/.test(trimmed) && !/DATE|TRANSACTION|BALANCE|SAVING|BRANCH|PAGE/i.test(trimmed)) {
           name = cleanName(trimmed);
         }
@@ -140,23 +156,41 @@ export function extractProfile(lines: string[]): Profile {
     }
   }
 
-  // 4. Generic fallbacks across the first 40 lines
+  // 4. Universal Bank Patterns (HDFC, SBI, Kotak, BOB, Canara, etc.)
   for (const line of headerLines) {
     if (!name) {
-      const match = line.match(/(?:Account\s+Holder|Customer|Client)\s*(?:Name)?\s*:\s*([^,\n;]+)/i);
+      // Matches Customer Name, Account Name, A/c Name, Name of Account Holder, Name:
+      const match = line.match(
+        /(?:Customer\s+Name|Account\s+Holder(?:\s+Name)?|Account\s+Name|A\/c\s+Name|Name\s+of\s+Account\s+Holder|Name\s+of\s+Customer|Client\s+Name|Beneficiary\s+Name|Name)\s*[:\-]\s*([^,\n;]+)/i
+      );
       if (match) name = cleanName(match[1]);
     }
     if (!branch) {
-      const match = line.match(/(?:Branch(?:\s+Name)?|Base\s+Branch)\s*:\s*([^,\n;]+)/i);
+      const match = line.match(/(?:Branch(?:\s+Name)?|Base\s+Branch)\s*[:\-]\s*([^,\n;]+)/i);
       if (match) branch = cleanBranch(match[1]);
     }
     if (!accountNo) {
-      const match = line.match(/(?:A\/c\s+No|Account\s+No|Account\s+Number)\s*[:\s]\s*([0-9Xx*]{6,24})/i);
+      const match = line.match(/(?:A\/c\s+No|Account\s+No|Account\s+Number|Account\s+Id)\s*[:\-\s]\s*([0-9Xx*]{6,24})/i);
       if (match) accountNo = cleanAccountNo(match[1]);
     }
     if (!ifsc) {
-      const match = line.match(/IFSC(?:\s*Code)?\s*[:\s]\s*([A-Za-z]{4}0[A-Za-z0-9]{6})/i);
+      const match = line.match(/(?:IFSC(?:\s*Code)?|RTGS\/NEFT\s+IFSC)\s*[:\-\s]\s*([A-Za-z]{4}0[A-Za-z0-9]{6})/i);
       if (match) ifsc = cleanIfsc(match[1]);
+    }
+  }
+
+  // 5. Honorific detection fallback (Mr. / Mrs. / Ms. Name on a line by itself)
+  if (!name) {
+    for (const line of headerLines) {
+      const trimmed = line.trim();
+      const match = trimmed.match(/^(?:MR|MRS|MS|DR|SHRI|SMT)\.?\s+([A-Z\s.]{3,40})$/i);
+      if (match) {
+        const candidate = cleanName(match[1]);
+        if (candidate) {
+          name = candidate;
+          break;
+        }
+      }
     }
   }
 

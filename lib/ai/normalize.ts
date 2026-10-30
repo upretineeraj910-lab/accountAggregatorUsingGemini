@@ -21,18 +21,85 @@ export function countExpectedRows(lines: string[]): number {
   return count;
 }
 
-function parseYMD(dateStr: string): Date | null {
+const MONTH_MAP: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+};
+
+export function parseDateRobust(dateStr: string): Date | null {
+  if (!dateStr || typeof dateStr !== "string") return null;
   const clean = dateStr.trim();
-  const m = clean.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
-  if (!m) return null;
-  const year = parseInt(m[1], 10);
-  const month = parseInt(m[2], 10) - 1;
-  const day = parseInt(m[3], 10);
-  if (month < 0 || month > 11 || day < 1 || day > 31) return null;
-  // Use noon (12:00) so timezone shifts don't change the calendar day
-  const d = new Date(year, month, day, 12, 0, 0, 0);
-  if (isNaN(d.getTime())) return null;
-  return d;
+
+  // 1. YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+  let m = clean.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if (m) {
+    const y = parseInt(m[1], 10);
+    const mon = parseInt(m[2], 10) - 1;
+    const d = parseInt(m[3], 10);
+    if (mon >= 0 && mon <= 11 && d >= 1 && d <= 31) {
+      return new Date(y, mon, d, 12, 0, 0, 0);
+    }
+  }
+
+  // 2. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY (Indian standard day-first)
+  m = clean.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (m) {
+    const d = parseInt(m[1], 10);
+    const mon = parseInt(m[2], 10) - 1;
+    const y = parseInt(m[3], 10);
+    if (mon >= 0 && mon <= 11 && d >= 1 && d <= 31) {
+      return new Date(y, mon, d, 12, 0, 0, 0);
+    }
+  }
+
+  // 3. DD/MM/YY or DD-MM-YY (2-digit year)
+  m = clean.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2})$/);
+  if (m) {
+    const d = parseInt(m[1], 10);
+    const mon = parseInt(m[2], 10) - 1;
+    let y = parseInt(m[3], 10);
+    y = y < 70 ? 2000 + y : 1900 + y;
+    if (mon >= 0 && mon <= 11 && d >= 1 && d <= 31) {
+      return new Date(y, mon, d, 12, 0, 0, 0);
+    }
+  }
+
+  // 4. DD Mon YYYY or DD-Mon-YYYY (e.g. 01 Jan 2026, 01-MAY-2026)
+  m = clean.match(/^(\d{1,2})[ \-.]([A-Za-z]{3})[ \-.](\d{2,4})$/);
+  if (m) {
+    const d = parseInt(m[1], 10);
+    const monName = m[2].toLowerCase();
+    let y = parseInt(m[3], 10);
+    if (y < 100) y = y < 70 ? 2000 + y : 1900 + y;
+    const mon = MONTH_MAP[monName];
+    if (mon !== undefined && d >= 1 && d <= 31) {
+      return new Date(y, mon, d, 12, 0, 0, 0);
+    }
+  }
+
+  return null;
+}
+
+function parseNum(val: unknown): number {
+  if (typeof val === "number" && isFinite(val)) return val;
+  if (typeof val === "string") {
+    const clean = val.replace(/,/g, "").trim();
+    const num = parseFloat(clean);
+    if (isFinite(num)) return num;
+  }
+  return NaN;
+}
+
+function parseType(val: unknown): "DEBIT" | "CREDIT" | null {
+  if (typeof val !== "string") return null;
+  const upper = val.trim().toUpperCase();
+  if (upper === "DEBIT" || upper === "DR" || upper === "WITHDRAWAL" || upper === "WDL") {
+    return "DEBIT";
+  }
+  if (upper === "CREDIT" || upper === "CR" || upper === "DEPOSIT" || upper === "DEP") {
+    return "CREDIT";
+  }
+  return null;
 }
 
 function round2(num: number): number {
@@ -52,10 +119,12 @@ export function normalizeRows(
       dropped++;
       continue;
     }
-    const d = typeof r.date === "string" ? parseYMD(r.date) : null;
-    const amt = typeof r.amount === "number" && isFinite(r.amount) ? round2(Math.abs(r.amount)) : NaN;
-    const bal = typeof r.balance === "number" && isFinite(r.balance) ? round2(r.balance) : NaN;
-    const type = r.type === "DEBIT" || r.type === "CREDIT" ? r.type : null;
+    const d = typeof r.date === "string" ? parseDateRobust(r.date) : null;
+    const rawAmt = parseNum(r.amount);
+    const rawBal = parseNum(r.balance);
+    const amt = isFinite(rawAmt) ? round2(Math.abs(rawAmt)) : NaN;
+    const bal = isFinite(rawBal) ? round2(rawBal) : NaN;
+    const type = parseType(r.type);
     const narr = typeof r.narration === "string" ? r.narration.trim() : "";
 
     if (!d || isNaN(amt) || isNaN(bal) || !type) {

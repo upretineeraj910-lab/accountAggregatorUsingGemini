@@ -127,10 +127,13 @@ export function detectSalary(
     chosenCredits = keywordMatched;
     method = "keyword";
   } else {
-    // Step B: Recurring matching (NEFT|RTGS|IMPS, amount >= 5000, consistent sender)
+    // Step B: Recurring matching (amount >= 5000, consistent employer/sender)
     const recurringEligible = eligibleCredits.filter((t) => {
       if (t.credit < 5000) return false;
-      return /(?:NEFT|RTGS|IMPS|NEFT_IN)/i.test(t.narration);
+      // Exclude obvious non-corporate deposits
+      const narr = t.narration;
+      if (/^(?:UPI[\/:]|CASH|ATM|CDM|BY CASH)/i.test(narr)) return false;
+      return true;
     });
 
     // Group by senderKey
@@ -147,10 +150,15 @@ export function detectSalary(
     let bestTotal = 0;
     let bestList: Txn[] = [];
 
+    const minMonthsRequired = totalMonthsCount === 1 ? 1 : 2;
+
     for (const [sender, list] of bySender.entries()) {
       const distinctMonths = new Set(list.map((t) => getMonthKey(t.date)));
-      // Candidate: >= 2 distinct months, >= 50% of total months
-      if (distinctMonths.size >= 2 && distinctMonths.size >= Math.ceil(totalMonthsCount * 0.5)) {
+      // Candidate: >= minMonthsRequired, >= 50% of total months
+      if (
+        distinctMonths.size >= minMonthsRequired &&
+        distinctMonths.size >= Math.ceil(totalMonthsCount * 0.5)
+      ) {
         const amounts = list.map((t) => t.credit);
         const med = calculateMedian(amounts);
         const withinBounds = list.filter(
