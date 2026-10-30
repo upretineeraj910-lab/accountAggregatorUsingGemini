@@ -53,7 +53,10 @@ export async function POST(req: NextRequest) {
 
 Provide a factual 4-5 bullet point summary of these numbers.`;
 
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = (process.env.GEMINI_MODEL || "gemini-3.5-flash")
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/gemini-2\.[05]-flash/, "gemini-3.5-flash");
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const controller = new AbortController();

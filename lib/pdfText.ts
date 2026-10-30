@@ -25,6 +25,7 @@ export async function pdfToLines(
     password,
     useSystemFonts: true,
     isEvalSupported: false,
+    standardFontDataUrl: "https://unpkg.com/pdfjs-dist@4.10.38/standard_fonts/",
   });
 
   const doc = await loadingTask.promise;

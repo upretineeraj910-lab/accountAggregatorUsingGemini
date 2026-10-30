@@ -189,34 +189,55 @@ async function callGeminiRest(
   model: string,
   apiKey: string
 ): Promise<{ candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, "");
+  let activeModel = model.trim().replace(/^["']|["']$/g, "");
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  // If configured with deprecated model, use current production model
+  if (activeModel.includes("2.5") || activeModel.includes("2.0") || activeModel.includes("1.5")) {
+    activeModel = "gemini-3.5-flash";
+  }
+
+  const makeCall = async (targetModel: string) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": cleanKey,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      return { status: res.status, ok: res.ok, res };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+    let callRes = await makeCall(activeModel);
 
-    if (!res.ok) {
-      throw new AiExtractError("CHUNK_FAILED", `Gemini API returned status ${res.status}`);
+    // If 404 is returned because the model is discontinued for new keys, try fast fallback model
+    if (callRes.status === 404 && activeModel !== "gemini-3.5-flash") {
+      activeModel = "gemini-3.5-flash";
+      callRes = await makeCall(activeModel);
     }
 
-    const data = await res.json();
+    if (!callRes.ok) {
+      throw new AiExtractError("CHUNK_FAILED", `Gemini API returned status ${callRes.status}`);
+    }
+
+    const data = await callRes.res.json();
     return data;
   } catch (err: unknown) {
     if (err instanceof AiExtractError) throw err;
     const errName = err instanceof Error ? err.name : "Error";
     throw new AiExtractError("CHUNK_FAILED", `Gemini API request failed: ${errName}`);
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -329,7 +350,7 @@ export async function extractWithAi(
   quality: AiQuality;
   meta: { model: string; chunks: number };
 }> {
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
   const apiKey = process.env.GEMINI_API_KEY;
 
   let caller: CallFn;
