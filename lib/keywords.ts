@@ -1,0 +1,81 @@
+/**
+ * Helper to construct word-boundary regexes so substrings like "NSE" don't match inside "LICENSE".
+ */
+export function kw(alts: string): RegExp {
+  return new RegExp("(?<![A-Za-z0-9])(?:" + alts + ")(?![A-Za-z0-9])", "i");
+}
+
+// SALARY
+export const SALARY_REGEX = kw(
+  "SALARY|SAL|PAYROLL|WAGES|STIPEND|SAL CR|TREASURY|PAY ?& ?ACCOUNTS|PAO|DDO|PENSION"
+);
+
+// OBLIGATIONS (EMIs / Loans)
+// Lender substrings can appear glued without word boundaries (e.g. HDBFINANCIALSERLTD, BAJAJFINANCE)
+export const LENDER_SUBSTR_REGEX =
+  /FINANCE|FINSERV|FINANCIAL|HDB ?FIN|BAJAJ|FULLERTON|MUTHOOT|MANAPPURAM|TATA CAPITAL/i;
+export const LOAN_ACC_REGEX = /TO\d{6}N[A-Z]\d{6,}/i;
+export const OBLIGATION_KEYWORD_REGEX = kw("EMI|NACH|ECS|LOAN|LOAN RECOVERY");
+
+export function isObligation(narration: string): boolean {
+  // Plain "ACH/" without lender or EMI keyword is NOT an EMI (e.g. ACH/LIC is insurance)
+  if (LENDER_SUBSTR_REGEX.test(narration) || LOAN_ACC_REGEX.test(narration)) {
+    return true;
+  }
+  if (OBLIGATION_KEYWORD_REGEX.test(narration)) {
+    return true;
+  }
+  return false;
+}
+
+// INSURANCE
+export const INSURANCE_REGEX = kw("LIC|INSURANCE|STAR HEA|STAR HEALTH|HDFC ERGO|ICICI LOMBARD|MAX LIFE|SBI LIFE");
+
+// BOUNCE
+export const BOUNCE_REGEX =
+  /(?:RETURN|BOUNCE|CHQ RET|INSUFFICIENT|ACH RTN|ECSRTN\d*|NACH RTN|RTN--)/i;
+
+// BETTING
+export const BETTING_REGEX = kw(
+  "DREAM ?11|RUMMY|MPL|BETTING|BET365|1XBET|JUNGLEE|MY11CIRCLE|WINZO|PARIMATCH"
+);
+
+// LOAN APPS (Fintech personal lending apps)
+export const LOAN_APP_REGEX = kw(
+  "KREDITBEE|MONEYVIEW|CASHE|FIBE|EARLYSALARY|NIRA|LAZYPAY|SLICE|KISSHT|STASHFIN|PAYSENSE|MONEYTAP|FLEXSALARY|ZESTMONEY|TRUECREDIT|INDIALENDS"
+);
+
+// CASH
+export const CASH_DEPOSIT_REGEX =
+  /(?:CASH DEP|CDM|BY CASH|ATM DEP|BNADEP|CSH DEP)/i;
+export const CASH_WITHDRAWAL_REGEX = kw(
+  "UPI WDR|ATM WDL|CASH WDL|CWDR|ATM CASH|CASH WITHDRAWAL"
+);
+
+// WALLETS
+export const WALLET_REGEX =
+  /(?:PAYTM WALLET|PHONEPE WALLET|AMAZON PAY|MOBIKWIK|FREECHARGE|WALLET LOAD|ADD MONEY|PPBL|PPIW|MBK|ONE MOBI|MBKCCBP|MBKWALLETADD)/i;
+
+// CREDIT CARD PAYMENTS & CARD-LIKE
+export const CC_PAYMENT_REGEX =
+  /(?:CRED ?CLUB|CRED\.CLUB|CC BILL ?PAY|CREDIT CARD|HSBC CARD|PAVC)/i;
+export const CARD_LIKE_REGEX =
+  /(?:BILLPAY|CCBP|AMAZON ?PAY ?LATER|OLA FIN)/i;
+
+// BROKER & TRADING (word boundaries prevent "NSE" from matching inside "LICENSE")
+export const BROKER_REGEX = kw(
+  "ZERODHA|GROWW|UPSTOX|ANGEL ONE|ANGEL BROKING|ICICI ?SEC|ICICIDIRECT|HDFC ?SEC|KOTAK ?SEC|5PAISA|PAYTM MONEY|SHAREKHAN|MOTILAL|NSE CLEARING|INDIAN CLEARING|ICCL|NSCCL"
+);
+
+export const MF_SIP_REGEX = kw(
+  "BSE STAR|NSE NMF|MF UTILITIES|MUTUAL FUND|SIP|CAMS|KFIN"
+);
+
+// REFUND & REVERSAL
+export const REFUND_REGEX = kw("REFUND|REVERSAL|CASHBACK");
+
+// INTEREST
+export const INTEREST_REGEX = /(?:INT\.? ?PD|INTEREST)/i;
+
+// LOAN-LIKE DISBURSEMENTS
+export const LOAN_LIKE_REGEX = kw("DISB|DISBURS|LDISB|LOAN CR");
